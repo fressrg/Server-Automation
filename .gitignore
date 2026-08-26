@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+worker.log
+chrome_profile/
+*.png
