@@ -1,0 +1,29 @@
+{
+  "name": "server-automation",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fressrg/Server-Automation.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/fressrg/Server-Automation/issues"
+  },
+  "homepage": "https://github.com/fressrg/Server-Automation#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4"
+  }
+}

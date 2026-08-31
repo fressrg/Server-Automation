@@ -4,3 +4,4 @@
 worker.log
 chrome_profile/
 *.png
+/node_modules
