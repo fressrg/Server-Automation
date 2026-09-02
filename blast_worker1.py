@@ -3,17 +3,34 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pythoncom
 import requests
+import urllib.parse
+
+# Hapus cache gen_py secara paksa sebelum memanggil win32com jika ada corrupt
+import win32com
+try:
+    if hasattr(win32com, '__gen_path__') and win32com.__gen_path__:
+        import shutil
+        if os.path.exists(win32com.__gen_path__):
+            shutil.rmtree(win32com.__gen_path__, ignore_errors=True)
+    
+    _gen_py_path = os.path.join(os.path.dirname(win32com.__file__), 'gen_py')
+    if os.path.exists(_gen_py_path):
+        import shutil
+        shutil.rmtree(_gen_py_path, ignore_errors=True)
+except Exception:
+    pass
+
 import win32com.client as win32
 import win32com.client.gencache as _gencache
-import xlwings as xw
 from dotenv import load_dotenv
 from PIL import ImageGrab
 
@@ -35,6 +52,9 @@ CHROME_USER_DATA_DIR = os.path.expandvars(os.environ.get("CHROME_USER_DATA_DIR",
 EXCEL_OPEN_DELAY_SEC = float(os.environ.get("EXCEL_OPEN_DELAY_SEC", "5"))
 EXCEL_OPEN_TIMEOUT_SEC = float(os.environ.get("EXCEL_OPEN_TIMEOUT_SEC", "180"))
 EXCEL_WORKBOOK_POLL_SEC = float(os.environ.get("EXCEL_WORKBOOK_POLL_SEC", "3"))
+EXCEL_REFRESH_TIMEOUT_SEC = float(os.environ.get("EXCEL_REFRESH_TIMEOUT_SEC", "300"))
+EXCEL_REFRESH_POLL_SEC = float(os.environ.get("EXCEL_REFRESH_POLL_SEC", "2"))
+CLIPBOARD_IMAGE_TIMEOUT_SEC = float(os.environ.get("CLIPBOARD_IMAGE_TIMEOUT_SEC", "3"))
 SCRIPT_DIR = Path(__file__).resolve().parent
 SCREENSHOT_DIR = SCRIPT_DIR / "screenshots"
 DUE_IDS_TXT = SCRIPT_DIR / "due_automation_ids.txt"
@@ -47,7 +67,12 @@ SCREENSHOT_WORK_LOCK = threading.Lock()
 def supabase_headers() -> dict[str, str]:
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
         raise ValueError("SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi di .env.")
-    return {"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"}
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
 
 
 def get_active_jobs() -> list[dict]:
@@ -56,7 +81,7 @@ def get_active_jobs() -> list[dict]:
         headers=supabase_headers(),
         params={
             "status": "eq.active",
-            "select": "id,nama_automation,link,nama_file,jam_blast,tanggal_blast,last_run_date",
+            "select": "id,nama_automation,link,nama_file,jam_blast,tanggal_blast,last_run_date,caption",
         },
         timeout=30,
     )
@@ -99,7 +124,7 @@ def load_job_groups(job: dict) -> None:
         headers=supabase_headers(),
         params={
             "request_id": f"eq.{request_id}", 
-            "select": "wa_group_id,wa_groups(id,group_name)"
+            "select": "wa_group_id,wa_groups(id,group_name,group_jid)"
         },
         timeout=30,
     )
@@ -134,17 +159,6 @@ def is_due(job: dict, now: datetime) -> bool:
         return False
     scheduled = datetime.combine(now.date(), scheduled_time)
     return scheduled <= now <= scheduled + timedelta(minutes=TOLERANCE_MINUTES)
-
-
-def mark_job_done(job_id: str) -> None:
-    response = requests.patch(
-        f"{SUPABASE_URL}/rest/v1/form_request",
-        headers={**supabase_headers(), "Prefer": "return=minimal"},
-        params={"id": f"eq.{job_id}"},
-        json={"last_run_date": str(date.today())},
-        timeout=30,
-    )
-    response.raise_for_status()
 
 
 def find_chrome() -> str:
@@ -240,8 +254,9 @@ def find_profile_for_email() -> str:
 
 
 def normalize_workbook_name(name: str) -> str:
-    """Hapus ekstensi, zero-width space, whitespace berlebih, lalu lowercase."""
-    normalized = " ".join(str(name).replace("\u200b", "").replace("\xa0", " ").split()).casefold()
+    """Hapus ekstensi, zero-width space, whitespace berlebih, url decode, lalu lowercase."""
+    name_unquoted = urllib.parse.unquote(str(name))
+    normalized = " ".join(name_unquoted.replace("\u200b", "").replace("\xa0", " ").split()).casefold()
     # Hapus ekstensi Excel dan suffix Excel seperti [1], [2] (copy protection)
     normalized = re.sub(r"\s*\[\d+\]$", "", normalized)
     normalized = re.sub(r"\.(xlsx|xlsb|xlsm|xls)$", "", normalized)
@@ -278,80 +293,30 @@ def workbook_matches_expected(workbook: object, expected_norm: str) -> bool:
     return False
 
 
-def _get_running_excel_apps_via_rot() -> list[object]:
-    """Fallback: cari Excel Application via GetActiveObject dan Running Object Table."""
-    applications = []
-    seen_ids: set[int] = set()
-
-    try:
-        app = win32.GetActiveObject("Excel.Application")
-        applications.append(app)
-        seen_ids.add(id(app))
-    except Exception:
-        pass
-
-    try:
-        rot = pythoncom.GetRunningObjectTable()
-        enum = rot.EnumRunning()
-        while True:
-            monikers = enum.Next(1)
-            if not monikers:
-                break
-            try:
-                candidate = win32.Dispatch(rot.GetObject(monikers[0]))
-                _ = candidate.Workbooks.Count  # validasi ini adalah Excel Application
-                obj_id = id(candidate)
-                if obj_id not in seen_ids:
-                    applications.append(candidate)
-                    seen_ids.add(obj_id)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    return applications
-
-
 def get_all_open_workbooks() -> list[object]:
-    """Ambil semua workbook dari semua instance Excel yang berjalan.
+    """Ambil semua workbook dari Excel yang berjalan menggunakan Late Binding murni.
 
-    Menggunakan xlwings sebagai metode utama karena dapat mendeteksi Excel
-    yang diminimize, di background, atau tidak aktif di foreground.
-    Fallback ke ROT jika xlwings gagal.
+    Ini menghindari error win32com.gen_py cache corrupt secara permanen
+    karena tidak membaca typelib sama sekali.
     """
     workbooks: list[object] = []
     seen_names: set[str] = set()
 
-    # Metode utama: xlwings — bekerja untuk Excel yang diminimize / background
     try:
-        for xl_app in xw.apps:
+        # Panggil Excel via late binding murni
+        excel = win32.dynamic.Dispatch("Excel.Application")
+        count = excel.Workbooks.Count
+        for i in range(1, count + 1):
             try:
-                for xl_book in xl_app.books:
-                    try:
-                        name = str(xl_book.name)
-                        if name not in seen_names:
-                            workbooks.append(xl_book.api)  # win32com Workbook object
-                            seen_names.add(name)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        if workbooks:
-            return workbooks
-    except Exception as xlw_error:
-        print(f"[WARN] xlwings gagal, fallback ke ROT: {xlw_error}")
-
-    # Fallback: GetActiveObject + Running Object Table
-    for excel in _get_running_excel_apps_via_rot():
-        try:
-            for i in range(1, excel.Workbooks.Count + 1):
                 wb = excel.Workbooks(i)
                 name = str(wb.Name)
                 if name not in seen_names:
                     workbooks.append(wb)
                     seen_names.add(name)
-        except Exception:
-            pass
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"[WARN] Gagal mendapatkan workbooks via dynamic dispatch: {e}")
 
     return workbooks
 
@@ -399,6 +364,19 @@ def save_due_job_ids(jobs: list[dict]) -> None:
     print(f"Snapshot ID automation disimpan ke {DUE_IDS_TXT}: {len(jobs)} ID.")
 
 
+def save_job_captions(jobs: list[dict]) -> None:
+    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    for automation_number, job in enumerate(jobs, start=1):
+        caption_path = SCREENSHOT_DIR / f"{automation_number}_caption.txt"
+        caption = str(job.get("caption") or "").strip()
+        if caption:
+            caption_path.write_text(caption, encoding="utf-8")
+            print(f"Caption automation {automation_number} disimpan: {caption_path}")
+        elif caption_path.exists():
+            caption_path.unlink()
+            print(f"Caption automation {automation_number} kosong; file lama dihapus.")
+
+
 def capture_range_image(
     workbook,
     sheet_name: str,
@@ -422,17 +400,20 @@ def capture_range_image(
         workbook.Activate()
         worksheet.Activate()
         cell_range_object.Select()
-        time.sleep(1)
         cell_range_object.CopyPicture(Appearance=1, Format=2)
-        time.sleep(1)
-        clipboard_image = ImageGrab.grabclipboard()
+        clipboard_deadline = time.time() + CLIPBOARD_IMAGE_TIMEOUT_SEC
+        clipboard_image = None
+        while time.time() < clipboard_deadline:
+            clipboard_image = ImageGrab.grabclipboard()
+            if clipboard_image is not None and hasattr(clipboard_image, "save"):
+                break
+            time.sleep(0.1)
         if clipboard_image is not None and hasattr(clipboard_image, "save"):
             clipboard_image.save(str(output_path), "PNG")
         else:
             chart_object = worksheet.ChartObjects().Add(0, 0, cell_range_object.Width, cell_range_object.Height)
             try:
                 chart_object.Chart.Paste()
-                time.sleep(1)
                 chart_object.Chart.Export(str(output_path), "PNG")
             finally:
                 chart_object.Delete()
@@ -441,9 +422,91 @@ def capture_range_image(
     return output_path
 
 
-def capture_job_ranges(workbook, job: dict, automation_number: int, group_name: str) -> None:
-    safe_group = re.sub(r"[^A-Za-z0-9 _-]", "", group_name).strip() or "tanpa_grup"
-    file_prefix = f"{automation_number}_{safe_group}"
+def call_with_retry(func, *args, max_retries=15, delay_sec=2.0, **kwargs):
+    """Jalankan fungsi COM berulang kali jika Excel sedang busy (0x800ac472)."""
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_str = str(e).lower()
+            if "800ac472" in error_str or "-2146777998" in error_str:
+                print(f"[WAIT] Excel sedang sibuk/loading, mencoba lagi dalam {delay_sec}s... ({attempt + 1}/{max_retries})")
+                time.sleep(delay_sec)
+            else:
+                raise
+    raise RuntimeError(f"Gagal mengeksekusi aksi: Excel terus sibuk setelah {max_retries} percobaan.")
+
+
+def disable_background_refresh(workbook: object) -> None:
+    """Paksa query workbook menunggu sampai refresh selesai sebelum lanjut."""
+    try:
+        connections = workbook.Connections
+        for index in range(1, connections.Count + 1):
+            connection = connections(index)
+            for property_name in ("OLEDBConnection", "ODBCConnection"):
+                try:
+                    setattr(getattr(connection, property_name), "BackgroundQuery", False)
+                except Exception:
+                    pass
+    except Exception as error:
+        print(f"[WARN] Tidak semua koneksi Excel bisa diatur sinkron: {error}")
+
+    for worksheet_index in range(1, workbook.Worksheets.Count + 1):
+        worksheet = workbook.Worksheets(worksheet_index)
+        try:
+            query_tables = worksheet.QueryTables
+            for index in range(1, query_tables.Count + 1):
+                try:
+                    query_tables(index).BackgroundQuery = False
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+def refresh_workbook(workbook: object) -> None:
+    """Refresh workbook secara blocking dan tunggu kalkulasi Excel selesai."""
+    disable_background_refresh(workbook)
+    print(f"[REFRESH] Memperbarui data workbook (timeout {EXCEL_REFRESH_TIMEOUT_SEC:g}s)...")
+    call_with_retry(workbook.RefreshAll, max_retries=30, delay_sec=2.0)
+
+    deadline = time.time() + EXCEL_REFRESH_TIMEOUT_SEC
+    while time.time() < deadline:
+        try:
+            call_with_retry(workbook.Application.CalculateUntilAsyncQueriesDone, max_retries=5, delay_sec=1.0)
+        except Exception as error:
+            print(f"[WARN] Menunggu query async Excel: {error}")
+
+        try:
+            calculation_state = int(workbook.Application.CalculationState)
+        except Exception:
+            calculation_state = 0
+        if calculation_state == 0:
+            print("[REFRESH] Refresh dan kalkulasi workbook selesai.")
+            return
+        time.sleep(EXCEL_REFRESH_POLL_SEC)
+
+    raise TimeoutError(f"Refresh workbook belum selesai dalam {EXCEL_REFRESH_TIMEOUT_SEC:g} detik.")
+
+
+def close_workbook(workbook: object) -> None:
+    try:
+        excel = workbook.Application
+        workbook.Close(SaveChanges=False)
+        if excel.Workbooks.Count == 0:
+            excel.Quit()
+        print("Workbook selesai diproses dan Excel ditutup.")
+    except Exception as error:
+        print(f"Gagal menutup workbook/Excel: {error}")
+
+
+def capture_job_ranges(workbook, job: dict, automation_number: int, group: dict) -> None:
+    # Gunakan group_jid sebagai identitas utama untuk mempermudah script JS mengirim pesan
+    group_jid = str(group.get("group_jid") or "").strip() or "tanpa_grup"
+    # Ganti karakter non-word menjadi underscore _kecuali_ @ dan . (yang aman dan penting untuk JID)
+    safe_jid = re.sub(r"[^\w@.-]", "_", group_jid)
+    
+    file_prefix = f"{automation_number}_{safe_jid}"
     screenshot_number = 0
     for sheet in job.get("request_sheets") or []:
         sheet_name = str(sheet.get("sheet_name") or "").strip()
@@ -453,7 +516,8 @@ def capture_job_ranges(workbook, job: dict, automation_number: int, group_name: 
                 continue
             screenshot_number += 1
             try:
-                screenshot_path = capture_range_image(
+                screenshot_path = call_with_retry(
+                    capture_range_image,
                     workbook,
                     sheet_name,
                     cell_range,
@@ -478,13 +542,7 @@ def open_one_sharepoint_in_excel(
     chrome: str,
     chrome_profile: str,
 ) -> None:
-    """Buka satu file SharePoint di Excel Desktop, tunggu terbuka, lalu screenshot.
-    
-    Fungsi ini berjalan di thread terpisah. Semua file dibuka bersamaan secara paralel.
-    Masing-masing thread poll tiap EXCEL_WORKBOOK_POLL_SEC detik untuk mengecek
-    apakah workbook miliknya sudah terbuka. File yang selesai lebih dulu langsung
-    dilanjutkan ke screenshot tanpa menunggu file lain.
-    """
+    """Buka satu file SharePoint, screenshot, lalu tutup workbook-nya."""
     pythoncom.CoInitialize()
     try:
         expected_name = str(job.get("nama_file") or "").strip()
@@ -518,21 +576,28 @@ def open_one_sharepoint_in_excel(
         print(f"[{automation_label}] Memerintahkan Excel membuka: {expected_name}")
         os.startfile(f"ms-excel:ofe|u|{sharepoint_url}")
 
-        # --- Langkah 3: Poll tiap 3 detik hingga workbook ditemukan ---
+        # --- Langkah 3: Poll hingga workbook ditemukan ---
         workbook = wait_for_workbook(expected_name)
 
-        # --- Langkah 4: Screenshot (serialized via lock karena clipboard shared) ---
+        # --- Langkah 4: Refresh data sebelum screenshot ---
+        refresh_workbook(workbook)
+
+        # --- Langkah 5: Screenshot (serialized via lock karena clipboard shared) ---
         print(f"[{automation_label}] File siap! Memulai screenshot...")
-        with SCREENSHOT_WORK_LOCK:
-            groups = job.get("wa_groups") or [{"group_name": "tanpa_grup"}]
-            for group in groups:
-                capture_job_ranges(
-                    workbook,
-                    job,
-                    job_number,
-                    str(group.get("group_name") or "tanpa_grup"),
-                )
-            print(f"[{automation_label}] Screenshot selesai untuk: {expected_name}")
+        try:
+            with SCREENSHOT_WORK_LOCK:
+                groups = job.get("wa_groups") or [{"group_jid": "tanpa_grup"}]
+                for group in groups:
+                    capture_job_ranges(
+                        workbook,
+                        job,
+                        job_number,
+                        group,
+                    )
+                print(f"[{automation_label}] Screenshot selesai untuk: {expected_name}")
+        finally:
+            close_workbook(workbook)
+        
     finally:
         pythoncom.CoUninitialize()
 
@@ -543,31 +608,58 @@ def open_sharepoint_in_excel(jobs: list[dict]) -> None:
     kill_stale_excel()  # Bersihkan proses Excel stale sebelum mulai
     chrome = find_chrome()
     chrome_profile = find_profile_for_email()
-    for batch_start in range(0, len(jobs), MAX_WORKERS):
+    total_jobs = len(jobs)
+    for batch_start in range(0, total_jobs, MAX_WORKERS):
         batch = jobs[batch_start:batch_start + MAX_WORKERS]
         batch_end = batch_start + len(batch)
         print(
-            f"Memproses batch {batch_start + 1}-{batch_end} dari {len(jobs)} "
-            f"(maksimal {MAX_AUTOMATIONS_PER_BATCH} automation)..."
+            f"Memproses batch {batch_start + 1}-{batch_end} dari {total_jobs} "
+            f"(maksimal {MAX_WORKERS} automation paralel)..."
         )
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = [
+
+        with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+            futures = {
                 executor.submit(
                     open_one_sharepoint_in_excel,
                     job,
                     batch_start + index + 1,
-                    len(jobs),
+                    total_jobs,
                     chrome,
                     chrome_profile,
-                )
+                ): batch_start + index + 1
                 for index, job in enumerate(batch)
-            ]
+            }
+
             for future in as_completed(futures):
+                automation_number = futures[future]
                 try:
                     future.result()
                 except Exception as error:
-                    print(f"Automation dalam batch gagal: {error}")
+                    print(f"Automation {automation_number} gagal: {error}")
+
         print(f"Batch {batch_start + 1}-{batch_end} selesai.")
+
+
+def send_screenshots() -> None:
+    sender_path = SCRIPT_DIR / "sent.py"
+    if not sender_path.is_file():
+        raise FileNotFoundError(f"Script pengiriman tidak ditemukan: {sender_path}")
+    print(f"Menjalankan pengiriman screenshot: {sender_path}")
+    subprocess.run([sys.executable, str(sender_path)], cwd=str(SCRIPT_DIR), check=True)
+
+
+def update_last_run_dates(jobs: list[dict], run_date: datetime.date) -> None:
+    for job in jobs:
+        request_id = str(job["id"])
+        response = requests.patch(
+            f"{SUPABASE_URL}/rest/v1/form_request",
+            headers=supabase_headers(),
+            params={"id": f"eq.{request_id}"},
+            json={"last_run_date": run_date.isoformat()},
+            timeout=30,
+        )
+        response.raise_for_status()
+        print(f"last_run_date automation {request_id} diperbarui menjadi {run_date.isoformat()}.")
 
 
 def main() -> None:
@@ -580,7 +672,10 @@ def main() -> None:
         load_job_groups(job)
     save_due_job_ids(due_jobs)
     if due_jobs:
+        save_job_captions(due_jobs)
         open_sharepoint_in_excel(due_jobs)
+        send_screenshots()
+        update_last_run_dates(due_jobs, now.date())
     else:
         print("Tidak ada automation yang perlu dijalankan sekarang.")
 

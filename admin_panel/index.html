@@ -1,0 +1,810 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WA Admin Panel — Server Automation</title>
+  <meta name="description" content="Dashboard admin untuk manage akun WhatsApp multi-user pada sistem Server Automation. Monitor status koneksi, scan QR, dan kelola grup secara real-time." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── Reset & base ────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0f14;
+      --surface:   #151820;
+      --surface2:  #1c2030;
+      --border:    rgba(255,255,255,.07);
+      --accent:    #25d366;
+      --accent2:   #128c7e;
+      --yellow:    #f4c430;
+      --red:       #e53e3e;
+      --blue:      #4299e1;
+      --text:      #e8eaf0;
+      --text2:     #8b92a8;
+      --radius:    14px;
+      --glow:      0 0 24px rgba(37,211,102,.18);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ─── Scrollbar ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 99px; }
+
+    /* ─── Header ──────────────────────────────────────────────── */
+    header {
+      background: linear-gradient(135deg, #0d1a14 0%, #0d1520 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+    }
+
+    .logo {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      box-shadow: var(--glow);
+    }
+
+    header h1 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+
+    header span {
+      font-size: .8rem;
+      color: var(--text2);
+      font-weight: 400;
+    }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: .6; transform: scale(1.3); }
+    }
+
+    .live-label { font-size: .75rem; color: var(--accent); font-weight: 500; }
+
+    /* ─── Main layout ─────────────────────────────────────────── */
+    main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 64px; }
+
+    /* ─── Section title ───────────────────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::before {
+      content: '';
+      display: block;
+      width: 3px; height: 16px;
+      background: linear-gradient(to bottom, var(--accent), var(--accent2));
+      border-radius: 2px;
+    }
+
+    /* ─── Button ──────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: .8rem;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all .2s;
+      border: none;
+      outline: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      box-shadow: 0 2px 12px rgba(37,211,102,.25);
+    }
+
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(37,211,102,.35); }
+
+    .btn-ghost {
+      background: var(--surface2);
+      color: var(--text2);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover { color: var(--text); background: #222840; }
+
+    .btn-danger {
+      background: rgba(229,62,62,.15);
+      color: var(--red);
+      border: 1px solid rgba(229,62,62,.25);
+    }
+
+    .btn-danger:hover { background: rgba(229,62,62,.25); }
+
+    /* ─── Account cards grid ──────────────────────────────────── */
+    #accounts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 18px;
+      margin-bottom: 40px;
+    }
+
+    .account-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      transition: border-color .25s, transform .25s, box-shadow .25s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .account-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0;
+      transition: opacity .3s;
+    }
+
+    .account-card:hover {
+      border-color: rgba(37,211,102,.25);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0,0,0,.3);
+    }
+
+    .account-card:hover::before { opacity: 1; }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .card-avatar {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--surface2), #222840);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .card-info { margin-left: 12px; flex: 1; min-width: 0; }
+
+    .card-name {
+      font-size: .95rem;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-phone {
+      font-size: .78rem;
+      color: var(--text2);
+      margin-top: 2px;
+    }
+
+    /* ─── Status badge ────────────────────────────────────────── */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: .72rem;
+      font-weight: 600;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    .badge-connected   { background: rgba(37,211,102,.15); color: var(--accent); }
+    .badge-connected .status-dot { background: var(--accent); animation: pulse 2s infinite; }
+
+    .badge-qr          { background: rgba(244,196,48,.15); color: var(--yellow); }
+    .badge-qr .status-dot { background: var(--yellow); animation: pulse 1.2s infinite; }
+
+    .badge-disconnected { background: rgba(139,146,168,.12); color: var(--text2); }
+    .badge-disconnected .status-dot { background: var(--text2); }
+
+    .badge-logged_out  { background: rgba(229,62,62,.12); color: var(--red); }
+    .badge-logged_out .status-dot { background: var(--red); }
+
+    .badge-starting    { background: rgba(66,153,225,.12); color: var(--blue); }
+    .badge-starting .status-dot { background: var(--blue); animation: pulse 1.5s infinite; }
+
+    /* ─── Card meta row ───────────────────────────────────────── */
+    .card-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .meta-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .78rem;
+    }
+
+    .meta-label { color: var(--text2); }
+    .meta-value { color: var(--text); font-weight: 500; font-family: 'Courier New', monospace; }
+    .meta-value.port-active { color: var(--accent); }
+    .meta-value.port-null   { color: var(--text2); font-style: italic; }
+
+    /* ─── QR Code area ────────────────────────────────────────── */
+    .qr-wrapper {
+      background: var(--surface2);
+      border-radius: 10px;
+      border: 1px solid rgba(244,196,48,.2);
+      padding: 16px;
+      margin-bottom: 16px;
+      text-align: center;
+      animation: fadeIn .4s ease;
+    }
+
+    .qr-label {
+      font-size: .72rem;
+      color: var(--yellow);
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .qr-wrapper img {
+      width: 180px; height: 180px;
+      border-radius: 8px;
+      background: #fff;
+      display: block;
+      margin: 0 auto 8px;
+    }
+
+    .qr-hint { font-size: .7rem; color: var(--text2); }
+
+    @keyframes fadeIn { from { opacity: 0; transform: scale(.95); } to { opacity: 1; transform: scale(1); } }
+
+    /* ─── Card actions ────────────────────────────────────────── */
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ─── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 60px 24px;
+      color: var(--text2);
+    }
+
+    .empty-state .icon { font-size: 3rem; margin-bottom: 12px; opacity: .4; }
+    .empty-state p { font-size: .9rem; }
+
+    /* ─── Add account form ────────────────────────────────────── */
+    .form-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 40px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+
+    label {
+      font-size: .75rem;
+      font-weight: 500;
+      color: var(--text2);
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+
+    input[type="text"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: .85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--text2); opacity: .5; }
+
+    /* ─── Toast ───────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 28px; right: 28px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: .82rem;
+      color: var(--text);
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+      transform: translateY(80px);
+      opacity: 0;
+      transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+      z-index: 999;
+      max-width: 300px;
+      pointer-events: none;
+    }
+
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.error { border-color: rgba(229,62,62,.4); color: var(--red); }
+    #toast.success { border-color: rgba(37,211,102,.3); color: var(--accent); }
+
+    /* ─── Skeleton loader ─────────────────────────────────────── */
+    .skeleton {
+      background: linear-gradient(90deg, var(--surface2) 25%, #222840 50%, var(--surface2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 6px;
+    }
+
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    /* ─── Groups section ──────────────────────────────────────── */
+    #groups-section { margin-top: 40px; }
+
+    .groups-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    table { width: 100%; border-collapse: collapse; }
+
+    th {
+      background: var(--surface2);
+      color: var(--text2);
+      font-size: .72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 11px 16px;
+      font-size: .82rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr:hover td { background: rgba(255,255,255,.025); }
+
+    .td-jid { font-family: monospace; font-size: .75rem; color: var(--text2); }
+    .td-account { font-size: .72rem; color: var(--text2); }
+
+    .active-chip {
+      display: inline-block;
+      background: rgba(37,211,102,.12);
+      color: var(--accent);
+      border-radius: 99px;
+      padding: 2px 8px;
+      font-size: .68rem;
+      font-weight: 600;
+    }
+
+    .inactive-chip {
+      display: inline-block;
+      background: rgba(139,146,168,.1);
+      color: var(--text2);
+      border-radius: 99px;
+      padding: 2px 8px;
+      font-size: .68rem;
+    }
+
+    /* ─── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      main { padding: 20px 16px 48px; }
+      header { padding: 14px 16px; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📱</div>
+  <div>
+    <h1>WA Admin Panel</h1>
+    <span>Server Automation — Multi-User WhatsApp Bridge</span>
+  </div>
+  <div class="header-right">
+    <div class="live-dot"></div>
+    <span class="live-label">Realtime</span>
+    <button class="btn btn-ghost" id="btn-refresh" title="Refresh manual">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── Add Account ── -->
+  <div class="section-header">
+    <h2 class="section-title">Akun WhatsApp</h2>
+    <button class="btn btn-primary" id="btn-toggle-form">＋ Tambah Akun</button>
+  </div>
+
+  <div class="form-card" id="add-form" style="display:none;">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="inp-session">Session Name</label>
+        <input type="text" id="inp-session" placeholder="contoh: akun-marketing" />
+      </div>
+      <div class="form-group">
+        <label for="inp-user-id">User ID (UUID dari profiles)</label>
+        <input type="text" id="inp-user-id" placeholder="uuid..." />
+      </div>
+      <div class="form-group">
+        <label for="inp-account-id">Account ID (UUID — opsional)</label>
+        <input type="text" id="inp-account-id" placeholder="auto-generate jika kosong" />
+      </div>
+      <div class="form-group">
+        <label for="inp-port">Preferred Port</label>
+        <input type="text" id="inp-port" placeholder="3001" />
+      </div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-primary" id="btn-create-account">Simpan ke Supabase</button>
+      <button class="btn btn-ghost" id="btn-cancel-form">Batal</button>
+    </div>
+    <div id="form-hint" style="margin-top:12px; font-size:.75rem; color:var(--text2);">
+      Setelah menyimpan, jalankan <code style="background:var(--surface2); padding:2px 6px; border-radius:4px;">node index.js</code> dengan env yang sesuai untuk mengaktifkan akun ini.
+    </div>
+  </div>
+
+  <!-- ── Accounts Grid ── -->
+  <div id="accounts-grid">
+    <!-- diisi JS -->
+    <div class="account-card skeleton" style="height:180px;"></div>
+    <div class="account-card skeleton" style="height:180px;"></div>
+  </div>
+
+  <!-- ── Groups Table ── -->
+  <div id="groups-section">
+    <div class="section-header">
+      <h2 class="section-title">Grup WhatsApp Terdaftar</h2>
+      <span id="groups-count" style="font-size:.8rem; color:var(--text2);"></span>
+    </div>
+    <div class="groups-table-wrap">
+      <table id="groups-table">
+        <thead>
+          <tr>
+            <th>Nama Grup</th>
+            <th>JID</th>
+            <th>Akun</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="groups-tbody">
+          <tr><td colspan="4" style="text-align:center; color:var(--text2); padding:24px;">Memuat data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<!-- Supabase JS via CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// ─── Config ────────────────────────────────────────────────────────────────
+// Ganti nilai ini sesuai project Supabase kamu
+const SUPABASE_URL  = 'https://nonnagkupmekckrcdxvo.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_gFoP2_YtogbkILmvKseHSg_p745ORpx';
+// ───────────────────────────────────────────────────────────────────────────
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ─── Toast helper ──────────────────────────────────────────────────────────
+function showToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show ' + type;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.className = ''; }, 3500);
+}
+
+// ─── Status badge helper ───────────────────────────────────────────────────
+function statusBadge(status) {
+  const labels = {
+    connected:    ['✓', 'Terhubung'],
+    qr:           ['⬛', 'Scan QR'],
+    disconnected: ['○', 'Terputus'],
+    logged_out:   ['✕', 'Logout'],
+    starting:     ['…', 'Starting'],
+  };
+  const [dot, label] = labels[status] ?? ['?', status ?? '-'];
+  return `<span class="status-badge badge-${status ?? 'disconnected'}">
+    <span class="status-dot"></span>${label}
+  </span>`;
+}
+
+// ─── UUID v4 helper ────────────────────────────────────────────────────────
+function uuidv4() {
+  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+}
+
+// ─── Render accounts ───────────────────────────────────────────────────────
+let _accountsMap = {};  // id -> row, untuk nama lookup di tabel grup
+
+function renderAccounts(accounts) {
+  const grid = document.getElementById('accounts-grid');
+  _accountsMap = {};
+
+  if (!accounts || accounts.length === 0) {
+    grid.innerHTML = `<div class="empty-state">
+      <div class="icon">📵</div>
+      <p>Belum ada akun WhatsApp terdaftar.<br>Klik tombol <strong>Tambah Akun</strong> untuk memulai.</p>
+    </div>`;
+    return;
+  }
+
+  grid.innerHTML = accounts.map(acc => {
+    _accountsMap[acc.id] = acc;
+    const isQr   = acc.status === 'qr';
+    const qrHtml = isQr && acc.qr_code_base64 ? `
+      <div class="qr-wrapper">
+        <div class="qr-label">📷 Scan QR untuk login</div>
+        <img src="${acc.qr_code_base64}" alt="QR Code WhatsApp" />
+        <div class="qr-hint">QR diperbarui otomatis saat masa berlakunya habis</div>
+      </div>` : '';
+
+    const portVal = acc.ws_port
+      ? `<span class="meta-value port-active">${acc.ws_port}</span>`
+      : `<span class="meta-value port-null">tidak aktif</span>`;
+
+    return `<div class="account-card" id="card-${acc.id}">
+      <div class="card-header">
+        <div style="display:flex; align-items:center; flex:1; min-width:0;">
+          <div class="card-avatar">${acc.phone ? '📱' : '📵'}</div>
+          <div class="card-info">
+            <div class="card-name">${acc.session_name ?? acc.id}</div>
+            <div class="card-phone">${acc.phone ? '+' + acc.phone : 'Belum login'}</div>
+          </div>
+        </div>
+        <div>${statusBadge(acc.status)}</div>
+      </div>
+
+      ${qrHtml}
+
+      <div class="card-meta">
+        <div class="meta-row">
+          <span class="meta-label">WS Port</span>
+          ${portVal}
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Account ID</span>
+          <span class="meta-value" style="font-size:.68rem; color:var(--text2);">${acc.id}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Updated</span>
+          <span class="meta-value" style="font-size:.72rem; color:var(--text2);">${acc.updated_at ? new Date(acc.updated_at).toLocaleString('id-ID') : '-'}</span>
+        </div>
+      </div>
+
+      <div class="card-actions">
+        <button class="btn btn-ghost" style="font-size:.72rem;" onclick="copyToClipboard('${acc.id}', 'Account ID disalin!')">📋 Salin ID</button>
+        <button class="btn btn-ghost" style="font-size:.72rem;" onclick="copyEnvTemplate('${acc.id}', '${acc.session_name ?? ''}')">📄 Salin .env</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Render groups ─────────────────────────────────────────────────────────
+function renderGroups(groups) {
+  const tbody = document.getElementById('groups-tbody');
+  document.getElementById('groups-count').textContent = `${groups.length} grup`;
+
+  if (!groups || groups.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text2); padding:24px;">Belum ada grup terdaftar.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = groups.map(g => {
+    const acc = _accountsMap[g.wa_account_id];
+    const accName = acc ? acc.session_name ?? acc.id : (g.wa_account_id ?? '-');
+    const activeChip = g.is_active
+      ? '<span class="active-chip">Aktif</span>'
+      : '<span class="inactive-chip">Nonaktif</span>';
+    return `<tr>
+      <td>${g.group_name ?? '-'}</td>
+      <td class="td-jid">${g.group_jid ?? '-'}</td>
+      <td class="td-account">${accName}</td>
+      <td>${activeChip}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Clipboard helpers ─────────────────────────────────────────────────────
+function copyToClipboard(text, msg) {
+  navigator.clipboard.writeText(text).then(() => showToast(msg ?? 'Disalin!', 'success'));
+}
+
+function copyEnvTemplate(accountId, sessionName) {
+  const env = `SUPABASE_URL=${SUPABASE_URL}\nACCOUNT_ID=${accountId}\nACCOUNT_SESSION_NAME=${sessionName}\nACCOUNT_USER_ID=<isi_user_id>\nWHATSAPP_PORT=3001\n`;
+  copyToClipboard(env, '.env template disalin!');
+}
+
+// ─── Load data from Supabase ───────────────────────────────────────────────
+async function loadData() {
+  try {
+    const [accRes, grpRes] = await Promise.all([
+      sb.from('wa_accounts').select('*').order('created_at', { ascending: true }),
+      sb.from('wa_groups').select('id,group_jid,group_name,wa_account_id,is_active').order('group_name'),
+    ]);
+
+    if (accRes.error) throw accRes.error;
+    if (grpRes.error) throw grpRes.error;
+
+    renderAccounts(accRes.data);
+    renderGroups(grpRes.data);
+  } catch (err) {
+    console.error(err);
+    showToast('Gagal memuat data: ' + err.message, 'error');
+  }
+}
+
+// ─── Supabase Realtime ─────────────────────────────────────────────────────
+function subscribeRealtime() {
+  sb.channel('wa-admin-realtime')
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'wa_accounts',
+    }, (payload) => {
+      console.log('Realtime wa_accounts:', payload.eventType, payload.new);
+      loadData();  // re-fetch semua untuk simplisitas
+    })
+    .on('postgres_changes', {
+      event: '*',
+      schema: 'public',
+      table: 'wa_groups',
+    }, () => {
+      loadData();
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('Realtime terhubung ke Supabase.');
+      }
+    });
+}
+
+// ─── Create account ────────────────────────────────────────────────────────
+async function createAccount() {
+  const sessionName = document.getElementById('inp-session').value.trim();
+  const userId      = document.getElementById('inp-user-id').value.trim();
+  const accountId   = document.getElementById('inp-account-id').value.trim() || uuidv4();
+
+  if (!sessionName) { showToast('Session Name wajib diisi.', 'error'); return; }
+  if (!userId)      { showToast('User ID wajib diisi.', 'error'); return; }
+
+  const btn = document.getElementById('btn-create-account');
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+
+  try {
+    const { error } = await sb.from('wa_accounts').insert({
+      id:           accountId,
+      user_id:      userId,
+      session_name: sessionName,
+      status:       'disconnected',
+      phone:        null,
+      qr_code_base64: null,
+    });
+
+    if (error) throw error;
+
+    showToast(`Akun '${sessionName}' berhasil dibuat!`, 'success');
+    document.getElementById('inp-session').value = '';
+    document.getElementById('inp-user-id').value = '';
+    document.getElementById('inp-account-id').value = '';
+    document.getElementById('add-form').style.display = 'none';
+    await loadData();
+  } catch (err) {
+    showToast('Gagal: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan ke Supabase';
+  }
+}
+
+// ─── UI event listeners ────────────────────────────────────────────────────
+document.getElementById('btn-toggle-form').addEventListener('click', () => {
+  const form = document.getElementById('add-form');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('btn-cancel-form').addEventListener('click', () => {
+  document.getElementById('add-form').style.display = 'none';
+});
+
+document.getElementById('btn-create-account').addEventListener('click', createAccount);
+
+document.getElementById('btn-refresh').addEventListener('click', () => {
+  showToast('Memuat ulang data...', '');
+  loadData();
+});
+
+// ─── Init ──────────────────────────────────────────────────────────────────
+loadData();
+subscribeRealtime();
+</script>
+</body>
+</html>

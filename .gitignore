@@ -5,3 +5,5 @@ worker.log
 chrome_profile/
 *.png
 /node_modules
+/screenshots
+/auth_info_baileys
